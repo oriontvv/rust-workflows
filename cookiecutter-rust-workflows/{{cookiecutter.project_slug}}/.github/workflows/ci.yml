@@ -1,0 +1,14 @@
+name: CI
+
+# Calls the shared CI workflow from {{ cookiecutter.rust_workflows_repo }} at ref
+# {{ cookiecutter.rust_workflows_ref }}. Jobs: check (matrix), test, fmt, clippy, plus the
+# optional wasm / nix / security-audit jobs toggled below.
+on: [push, pull_request]
+
+jobs:
+  ci:
+    uses: {{ cookiecutter.rust_workflows_repo }}/workflows/ci.yml@{{ cookiecutter.rust_workflows_ref }}
+    with:
+      enable-wasm: {{ 'true' if cookiecutter.enable_wasm == 'yes' else 'false' }}
+      enable-nix: {{ 'true' if cookiecutter.enable_nix == 'yes' else 'false' }}
+      enable-audit: {{ 'true' if cookiecutter.enable_audit == 'yes' else 'false' }}

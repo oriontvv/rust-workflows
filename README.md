@@ -4,16 +4,32 @@ Common, reusable GitHub Actions workflows for Rust projects: CI (check/test/fmt/
 coverage publishing, GitHub Pages (wasm) deploy and a full release pipeline (GitHub Release +
 crates.io + Docker + Homebrew tap). Extracted from [convfmt](https://github.com/oriontvv/convfmt).
 
-Each file in [`.github/workflows/`](./.github/workflows/) is a [reusable workflow](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
+Each file in [`workflows/`](workflows/) is a [reusable workflow](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
 (`on: workflow_call`). A consuming repo doesn't copy the YAML — it calls it with `uses:` and a few
 inputs/secrets.
 
 ## How to inherit
 
-In your project's repo, create thin wrapper workflows under `.github/workflows/` that call the ones
+In your project's repo, create thin wrapper workflows under `workflows/` that call the ones
 here. Pin to a tag/SHA for stability, or `@master` to always get the latest version.
 
-### `.github/workflows/ci.yml`
+### Scaffolding with cookiecutter
+
+Instead of writing the wrappers by hand, use the bundled
+[`cookiecutter-rust-workflows`](./cookiecutter-rust-workflows) template — it generates the wrapper
+workflows and `dependabot.yml` from a short questionnaire:
+
+```sh
+# uv/uvx (no install needed)
+uvx cookiecutter gh:oriontvv/rust-workflows --directory cookiecutter-rust-workflows
+```
+
+Requires [`uv`](https://docs.astral.sh/uv/) and `git`. Prefer `uv tool install cookiecutter` if you
+scaffold often and don't want to re-resolve the environment each run.
+
+See [its README](./cookiecutter-rust-workflows/README.md) for the full option list.
+
+### `workflows/ci.yml`
 
 ```yaml
 name: CI
@@ -28,7 +44,7 @@ jobs:
       enable-audit: true
 ```
 
-### `.github/workflows/coverage.yml`
+### `workflows/coverage.yml`
 
 ```yaml
 name: Coverage
@@ -47,7 +63,7 @@ jobs:
       # coverage-command: make coverage
 ```
 
-### `.github/workflows/pages.yml` (optional, wasm projects only)
+### `workflows/pages.yml` (optional, wasm projects only)
 
 ```yaml
 name: Pages
@@ -67,7 +83,7 @@ jobs:
 
 Requires enabling **Settings → Pages → Source: GitHub Actions** once in the consuming repo.
 
-### `.github/workflows/release.yml`
+### `workflows/release.yml`
 
 ```yaml
 name: Release

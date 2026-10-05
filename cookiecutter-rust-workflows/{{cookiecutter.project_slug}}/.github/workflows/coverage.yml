@@ -1,0 +1,16 @@
+name: Coverage
+
+# Runs on the default branch only and force-pushes the generated HTML report to
+# the `coverage` branch.
+on:
+  push:
+    branches:
+      - {{ cookiecutter.default_branch }}
+
+jobs:
+  coverage:
+    uses: {{ cookiecutter.rust_workflows_repo }}/workflows/coverage.yml@{{ cookiecutter.rust_workflows_ref }}
+    permissions:
+      contents: write
+    with:
+      coverage-branch: coverage

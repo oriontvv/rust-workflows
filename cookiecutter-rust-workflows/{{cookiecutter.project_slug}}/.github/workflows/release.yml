@@ -1,0 +1,37 @@
+name: Release
+
+# Triggered by a semver tag push (e.g. `git tag 1.0.0 && git push --tags`).
+# Builds release binaries, creates a GitHub Release, uploads a `<asset>.sha256`
+# for each asset, and runs the publish jobs enabled in cookiecutter.
+on:
+  push:
+    tags:
+      - '*.*.*'
+
+jobs:
+  release:
+    uses: {{ cookiecutter.rust_workflows_repo }}/workflows/release.yml@{{ cookiecutter.rust_workflows_ref }}
+    with:
+      binary-name: {{ cookiecutter.binary_name }}
+      enable-crates: {{ 'true' if cookiecutter.enable_crates == 'yes' else 'false' }}
+      enable-docker: {{ 'true' if cookiecutter.enable_docker == 'yes' else 'false' }}
+      enable-homebrew: {{ 'true' if cookiecutter.enable_homebrew == 'yes' else 'false' }}
+      enable-wix-msi: {{ 'true' if cookiecutter.enable_wix_msi == 'yes' else 'false' }}
+      docker-image: {{ cookiecutter.docker_image }}
+      homebrew-tap-repo: {{ cookiecutter.homebrew_tap_repo }}
+      homebrew-description: {{ cookiecutter.description }}
+      homebrew-homepage: https://github.com/{{ cookiecutter.github_owner }}/{{ cookiecutter.project_slug }}
+      homebrew-license: {{ cookiecutter.homebrew_license }}
+{%- if cookiecutter.enable_crates == 'yes' or cookiecutter.enable_docker == 'yes' or cookiecutter.enable_homebrew == 'yes' %}
+    secrets:
+{%- if cookiecutter.enable_crates == 'yes' %}
+      CARGO_TOKEN: {% raw %}${{ secrets.CARGO_TOKEN }}{% endraw %}
+{%- endif %}
+{%- if cookiecutter.enable_docker == 'yes' %}
+      DOCKERHUB_USERNAME: {% raw %}${{ secrets.DOCKERHUB_USERNAME }}{% endraw %}
+      DOCKERHUB_TOKEN: {% raw %}${{ secrets.DOCKERHUB_TOKEN }}{% endraw %}
+{%- endif %}
+{%- if cookiecutter.enable_homebrew == 'yes' %}
+      HOMEBREW_TAP_TOKEN: {% raw %}${{ secrets.HOMEBREW_TAP_TOKEN }}{% endraw %}
+{%- endif %}
+{%- endif %}

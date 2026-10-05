@@ -1,0 +1,17 @@
+name: Pages
+
+# Deploys the wasm build to GitHub Pages on every release tag.
+# Enable once in the repository: Settings -> Pages -> Source: GitHub Actions.
+on:
+  push:
+    tags:
+      - '*.*.*'
+  workflow_dispatch:
+
+jobs:
+  pages:
+    uses: {{ cookiecutter.rust_workflows_repo }}/workflows/pages.yml@{{ cookiecutter.rust_workflows_ref }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
