@@ -1,0 +1,65 @@
+name: Reusable Pages
+
+# Publishes a wasm/web build to GitHub Pages. Requires the calling repo to
+# have "Settings -> Pages -> Source: GitHub Actions" enabled once, and to
+# grant this workflow `pages: write` / `id-token: write` permissions when
+# calling it (permissions are not inherited by workflow_call across repos
+# by default, but are within the same repo).
+on:
+  workflow_call:
+    inputs:
+      wasm-tools-command:
+        description: 'Command that installs the wasm target and matching tooling'
+        type: string
+        default: 'make web-tools'
+      wasm-build-command:
+        description: 'Command that builds the web/wasm bundle'
+        type: string
+        default: 'make web-build'
+      pages-artifact-path:
+        description: 'Directory to upload as the Pages artifact'
+        type: string
+        default: 'web/static'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - uses: cargo-bins/cargo-binstall@main
+
+      - name: Install wasm target and tooling
+        run: ${{ inputs.wasm-tools-command }}
+
+      - name: Build web version
+        run: ${{ inputs.wasm-build-command }}
+
+      - uses: actions/configure-pages@v6
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: ${{ inputs.pages-artifact-path }}
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

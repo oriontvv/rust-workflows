@@ -1,0 +1,72 @@
+name: Reusable Coverage
+
+# Builds an HTML coverage report (grcov) and publishes it by force-pushing it
+# to a dedicated branch (default: "coverage"). Call this on push to your
+# default branch only, e.g.:
+#
+#   on:
+#     push:
+#       branches: [master]
+on:
+  workflow_call:
+    inputs:
+      coverage-branch:
+        description: 'Branch the generated ./htmlcov report is force-pushed to'
+        type: string
+        default: 'coverage'
+      coverage-command:
+        description: >-
+          Shell command that produces the ./htmlcov report. Override this if
+          your project already has its own `make coverage` target.
+        type: string
+        default: >-
+          rustup component add llvm-tools-preview &&
+          cargo install grcov &&
+          mkdir -p target/coverage &&
+          LLVM_PROFILE_FILE='target/coverage/%p-%m.profraw' RUSTFLAGS='-C instrument-coverage' cargo test &&
+          grcov . -s . --binary-path ./target/debug --ignore src/main.rs -t html --branch --ignore-not-existing -o ./htmlcov/
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Cargo update
+        run: cargo update
+      - uses: actions-rs/cargo@v1
+        with:
+          command: check
+
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Test coverage
+        run: ${{ inputs.coverage-command }}
+
+      - name: Upload coverage results
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          branch: ${{ inputs.coverage-branch }}
+          create_branch: true
+          commit_message: Update coverage
+          push_options: '--force'
