@@ -1,0 +1,155 @@
+name: Reusable CI
+
+# Basic cargo check/test/fmt/clippy pipeline for any Rust project.
+# Call it from your repo's own workflow with `uses: oriontvv/rust-workflows/workflows/ci.yml@main`.
+on:
+  workflow_call:
+    inputs:
+      rust-check-versions:
+        description: 'JSON array of toolchains used by the `check` matrix'
+        type: string
+        default: '["stable", "beta", "nightly"]'
+      enable-wasm:
+        description: 'Build/test a wasm (web) target via the wasm-*-command inputs'
+        type: boolean
+        default: false
+      enable-nix:
+        description: 'Build the flake package via `nix build`'
+        type: boolean
+        default: false
+      enable-audit:
+        description: 'Run a cargo security audit via actions-rs/audit-check'
+        type: boolean
+        default: true
+      wasm-tools-command:
+        description: 'Command that installs the wasm target and matching tooling'
+        type: string
+        default: 'make web-tools'
+      wasm-test-command:
+        description: 'Command that runs the wasm wrapper tests'
+        type: string
+        default: 'make web-test'
+      wasm-build-command:
+        description: 'Command that builds the web/wasm bundle'
+        type: string
+        default: 'make web-build'
+      nix-build-command:
+        description: 'Command that builds the Nix flake package'
+        type: string
+        default: 'nix build --print-build-logs'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rust: ${{ fromJSON(inputs.rust-check-versions) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{ matrix.rust }}
+          override: true
+      - name: Cargo update
+        run: cargo update
+      - uses: actions-rs/cargo@v1
+        with:
+          command: check
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Install stable toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Run cargo test
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - run: rustup component add rustfmt
+      - uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - run: rustup component add clippy
+      - uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: -- -D warnings
+
+  wasm:
+    name: Web version
+    if: ${{ inputs.enable-wasm }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install wasm target and tooling
+        run: ${{ inputs.wasm-tools-command }}
+      - name: Run wasm wrapper tests
+        run: ${{ inputs.wasm-test-command }}
+      - name: Build web version
+        run: ${{ inputs.wasm-build-command }}
+
+  nix:
+    name: Nix package
+    if: ${{ inputs.enable-nix }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+      - name: Build the flake package
+        run: ${{ inputs.nix-build-command }}
+
+  sec:
+    name: Security audit
+    if: ${{ inputs.enable-audit }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      checks: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rs/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,312 @@
+name: Reusable Release
+
+# Builds release binaries for Linux (musl)/macOS/Windows, creates a GitHub
+# Release and, optionally, publishes to crates.io, Docker Hub and a Homebrew
+# tap. Trigger it on tag push from the calling repo, e.g.:
+#
+#   on:
+#     push:
+#       tags: ['*.*.*']
+on:
+  workflow_call:
+    inputs:
+      binary-name:
+        description: 'Name of the built binary / crate (e.g. convfmt)'
+        type: string
+        required: true
+      enable-crates:
+        description: 'Publish the crate to crates.io'
+        type: boolean
+        default: true
+      enable-docker:
+        description: 'Build and push a multi-arch Docker image'
+        type: boolean
+        default: false
+      enable-homebrew:
+        description: 'Bump the formula in a Homebrew tap repo'
+        type: boolean
+        default: false
+      enable-wix-msi:
+        description: 'Build a Windows .msi installer via cargo-wix (requires a wix/ dir)'
+        type: boolean
+        default: false
+      docker-image:
+        description: 'Docker Hub image, e.g. oriontvv/convfmt (required if enable-docker)'
+        type: string
+        default: ''
+      homebrew-tap-repo:
+        description: 'owner/repo of the Homebrew tap to push the formula to'
+        type: string
+        default: 'oriontvv/homebrew-tap'
+      homebrew-formula-class:
+        description: 'Ruby class name for the formula; defaults to Capitalized(binary-name)'
+        type: string
+        default: ''
+      homebrew-description:
+        description: 'Formula "desc" field'
+        type: string
+        default: ''
+      homebrew-homepage:
+        description: 'Formula "homepage" field'
+        type: string
+        default: ''
+      homebrew-license:
+        description: 'Formula "license" field'
+        type: string
+        default: 'Apache-2.0'
+    secrets:
+      CARGO_TOKEN:
+        description: 'crates.io API token; required if enable-crates'
+        required: false
+      DOCKERHUB_USERNAME:
+        description: 'Docker Hub username; required if enable-docker'
+        required: false
+      DOCKERHUB_TOKEN:
+        description: 'Docker Hub access token; required if enable-docker'
+        required: false
+      HOMEBREW_TAP_TOKEN:
+        description: 'PAT with push access to the Homebrew tap repo; required if enable-homebrew'
+        required: false
+
+jobs:
+  release-github:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          components: clippy
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Run tests
+        run: cargo test --workspace
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-features -- -D warnings
+
+      - name: Setup MUSL target
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          sudo apt-get -qq install musl-tools
+
+      - name: Build release (Linux musl)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cargo build --release --target=x86_64-unknown-linux-musl
+          strip target/x86_64-unknown-linux-musl/release/${{ inputs.binary-name }}
+          mkdir -p release
+          tar -C ./target/x86_64-unknown-linux-musl/release/ -czvf ./release/${{ inputs.binary-name }}-linux-musl.tar.gz ./${{ inputs.binary-name }}
+
+      - name: Build release (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          strip target/release/${{ inputs.binary-name }}
+          mkdir -p release
+          tar -C ./target/release/ -czvf ./release/${{ inputs.binary-name }}-mac.tar.gz ./${{ inputs.binary-name }}
+
+      - name: Build release (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          mkdir -p release
+          tar -C ./target/release/ -czvf ./release/${{ inputs.binary-name }}-win.tar.gz ./${{ inputs.binary-name }}.exe
+
+      - name: Build Windows MSI
+        if: ${{ matrix.os == 'windows-latest' && inputs.enable-wix-msi }}
+        run: |
+          cargo install cargo-wix --version 0.3.3
+          cargo wix --no-build --nocapture --output ./release/${{ inputs.binary-name }}.msi
+
+      - name: Extract release notes
+        if: matrix.os == 'ubuntu-latest'
+        id: release_notes
+        uses: ffurrer2/extract-release-notes@v3
+
+      - name: Release
+        uses: softprops/action-gh-release@v3
+        with:
+          body: ${{ steps.release_notes.outputs.release_notes }}
+          prerelease: ${{ contains(github.ref, '-') }}
+          files: |
+            ./release/*.tar.gz
+            ./release/*.zip
+            ./release/*.msi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-checksums:
+    needs: release-github
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Determine version
+        id: version
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Download release assets and compute SHA256
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          gh release download "${{ steps.version.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --dir assets
+          cd assets
+          for f in *; do
+            case "$f" in *.sha256) continue ;; esac
+            shasum -a 256 "$f" > "$f.sha256"
+          done
+          cat *.sha256
+
+      - name: Upload checksum files to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.version.outputs.tag }}" assets/*.sha256 \
+            --repo "${{ github.repository }}" \
+            --clobber
+
+  release-crates:
+    needs: release-github
+    if: ${{ inputs.enable-crates }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Publish package to crates.io
+        run: |
+          cargo package
+          cargo publish --token ${{ secrets.CARGO_TOKEN }}
+
+  release-docker:
+    needs: release-github
+    if: ${{ inputs.enable-docker }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # `latest` is moved only by stable tags, prereleases (1.2.3-rc1) get just their own tag
+      - name: Docker tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ inputs.docker-image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      # arm64 is built under emulation, so this job is slower than a native one
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  bump-homebrew:
+    needs: release-github
+    if: ${{ inputs.enable-homebrew && !contains(github.ref, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine version
+        id: version
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Download release assets and compute SHA256
+        id: hashes
+        run: |
+          set -e
+          VERSION="${{ steps.version.outputs.tag }}"
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}"
+
+          curl -fsSL "${BASE_URL}/${{ inputs.binary-name }}-mac.tar.gz" -o mac.tar.gz
+          curl -fsSL "${BASE_URL}/${{ inputs.binary-name }}-linux-musl.tar.gz" -o linux.tar.gz
+
+          echo "mac=$(sha256sum mac.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
+          echo "linux=$(sha256sum linux.tar.gz | awk '{print $1}')" >> $GITHUB_OUTPUT
+
+      - name: Generate formula
+        run: |
+          VERSION="${{ steps.version.outputs.tag }}"
+          NAME="${{ inputs.binary-name }}"
+          CLASS="${{ inputs.homebrew-formula-class }}"
+          if [ -z "$CLASS" ]; then
+            CLASS="$(tr '[:lower:]' '[:upper:]' <<< "${NAME:0:1}")${NAME:1}"
+          fi
+
+          cat > "${NAME}.rb" <<EOF
+          class ${CLASS} < Formula
+            desc "${{ inputs.homebrew-description }}"
+            homepage "${{ inputs.homebrew-homepage }}"
+            version "${VERSION}"
+            license "${{ inputs.homebrew-license }}"
+
+            on_macos do
+              url "https://github.com/${{ github.repository }}/releases/download/${VERSION}/${NAME}-mac.tar.gz"
+              sha256 "${{ steps.hashes.outputs.mac }}"
+            end
+
+            on_linux do
+              url "https://github.com/${{ github.repository }}/releases/download/${VERSION}/${NAME}-linux-musl.tar.gz"
+              sha256 "${{ steps.hashes.outputs.linux }}"
+            end
+
+            def install
+              bin.install "${NAME}"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/${NAME} --version")
+            end
+          end
+          EOF
+
+          echo "Generated formula:"
+          cat "${NAME}.rb"
+
+      - name: Checkout tap repository
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.homebrew-tap-repo }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+          persist-credentials: false
+
+      - name: Update formula in tap
+        run: |
+          NAME="${{ inputs.binary-name }}"
+          cp "${NAME}.rb" "homebrew-tap/Formula/${NAME}.rb"
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "Formula/${NAME}.rb"
+          git commit -m "${NAME} ${GITHUB_REF#refs/tags/}" || echo "No changes to commit"
+          git push "https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/${{ inputs.homebrew-tap-repo }}.git"
