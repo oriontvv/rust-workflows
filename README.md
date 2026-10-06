@@ -149,6 +149,10 @@ Needs `permissions: contents: write` on the calling job to push the coverage bra
 | Input | Type | Default | Description |
 |---|---|---|---|
 | `binary-name` | string | **required** | Crate/binary name, used in archive and tap formula names |
+| `enable-binaries` | boolean | `true` | Build the binary archives and create the GitHub Release from them. Set `false` for a crate without a binary, e.g. a dprint plugin |
+| `enable-dprint-plugin` | boolean | `false` | Build a dprint Wasm plugin and attach `plugin.wasm` + `schema.json` to the GitHub Release |
+| `dprint-plugin-features` | string | `wasm` | Cargo features that build the crate as a Wasm plugin (passed to `wasm.yml`) |
+| `dprint-schema-path` | string | `deployment/schema.json` | Config schema; the `0.0.0` in its `$id` is replaced by the tag |
 | `enable-crates` | boolean | `true` | Run `cargo publish` |
 | `enable-docker` | boolean | `false` | Build & push a multi-arch Docker image |
 | `enable-homebrew` | boolean | `false` | Bump the formula in a Homebrew tap repo |
@@ -160,9 +164,50 @@ Needs `permissions: contents: write` on the calling job to push the coverage bra
 | `homebrew-homepage` | string | `''` | Formula `homepage` |
 | `homebrew-license` | string | `Apache-2.0` | Formula `license` |
 
-Always builds GitHub Release assets for `ubuntu-latest` (musl), `macos-latest` and `windows-latest`,
-then creates a GitHub Release via `softprops/action-gh-release`, pulling release notes from
-`CHANGELOG.md` via `ffurrer2/extract-release-notes`.
+With `enable-binaries` (the default) it builds GitHub Release assets for `ubuntu-latest` (musl),
+`macos-latest` and `windows-latest`, then creates a GitHub Release via `softprops/action-gh-release`,
+pulling release notes from `CHANGELOG.md` via `ffurrer2/extract-release-notes`.
+
+
+### `wasm.yml`
+
+Builds a crate as a WebAssembly module and uploads it as an artifact. It knows nothing about dprint or
+releases, so it is usable on its own, e.g. to check in CI that a crate still compiles for Wasm, or as the
+first step of a custom release:
+
+```yaml
+jobs:
+  wasm:
+    uses: oriontvv/rust-workflows/.github/workflows/wasm.yml@master
+    with:
+      features: wasm
+  publish:
+    needs: wasm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.wasm.outputs.artifact-name }}
+      - run: ls -l ${{ needs.wasm.outputs.wasm-file }}
+```
+
+The module is the `cdylib` target of the package, so `[lib]` needs `crate-type = ["cdylib"]`.
+
+| Input | Type | Default | Description |
+|---|---|---|---|
+| `features` | string | `''` | Cargo features, comma separated |
+| `target` | string | `wasm32-unknown-unknown` | Rust target, e.g. `wasm32-wasip1` |
+| `package` | string | `''` | Package to build (`-p`); empty for the crate in the repository root |
+| `run-tests` | boolean | `false` | Run `cargo test` and `cargo clippy -D warnings` first |
+| `artifact-name` | string | `wasm` | Name of the uploaded artifact |
+| `artifact-retention-days` | number | `7` | How long the artifact is kept |
+
+| Output | Description |
+|---|---|
+| `crate-name` | Name of the built package |
+| `version` | Version of the built package |
+| `wasm-file` | File name of the module inside the artifact |
+| `artifact-name` | Name of the artifact that holds the module |
 
 ## Environment variables / secrets
 

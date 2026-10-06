@@ -1,0 +1,140 @@
+name: Reusable Wasm build
+
+# Builds a crate as a WebAssembly module and uploads it as a workflow artifact. It knows nothing about
+# dprint or releases, so any project can use it, e.g. to build a Wasm plugin, to check that a crate still
+# compiles for Wasm in CI, or as the first step of its own release.
+#
+#   jobs:
+#     wasm:
+#       uses: oriontvv/rust-workflows/.github/workflows/wasm.yml@master
+#       with:
+#         features: wasm
+#     use:
+#       needs: wasm
+#       runs-on: ubuntu-latest
+#       steps:
+#         - uses: actions/download-artifact@v4
+#           with:
+#             name: ${{ needs.wasm.outputs.artifact-name }}
+#         - run: ls -l ${{ needs.wasm.outputs.wasm-file }}
+#
+# The module is the crate's `cdylib` target, so the crate needs `crate-type = ["cdylib"]` in `[lib]`.
+on:
+  workflow_call:
+    inputs:
+      features:
+        description: 'Cargo features to build with, comma separated; empty for the default features'
+        type: string
+        default: ''
+      target:
+        description: 'Rust target to build for, e.g. wasm32-unknown-unknown or wasm32-wasip1'
+        type: string
+        default: 'wasm32-unknown-unknown'
+      package:
+        description: 'Package to build (`cargo build -p`); empty for the crate in the repository root'
+        type: string
+        default: ''
+      run-tests:
+        description: 'Run cargo test and clippy (-D warnings) before building'
+        type: boolean
+        default: false
+      artifact-name:
+        description: 'Name of the uploaded artifact'
+        type: string
+        default: 'wasm'
+      artifact-retention-days:
+        description: 'How long the artifact is kept'
+        type: number
+        default: 7
+    outputs:
+      crate-name:
+        description: 'Name of the built package'
+        value: ${{ jobs.build.outputs.crate-name }}
+      version:
+        description: 'Version of the built package'
+        value: ${{ jobs.build.outputs.version }}
+      wasm-file:
+        description: 'File name of the module inside the artifact'
+        value: ${{ jobs.build.outputs.wasm-file }}
+      artifact-name:
+        description: 'Name of the artifact that holds the module'
+        value: ${{ inputs.artifact-name }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build Wasm
+    runs-on: ubuntu-latest
+    outputs:
+      crate-name: ${{ steps.meta.outputs.crate-name }}
+      version: ${{ steps.meta.outputs.version }}
+      wasm-file: ${{ steps.meta.outputs.wasm-file }}
+    env:
+      FEATURES: ${{ inputs.features }}
+      TARGET: ${{ inputs.target }}
+      PACKAGE: ${{ inputs.package }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          target: ${{ inputs.target }}
+          components: clippy
+
+      - name: Read the package metadata
+        id: meta
+        run: |
+          meta="$(cargo metadata --no-deps --format-version 1)"
+          pkg="$(jq -c --arg p "$PACKAGE" '
+            [.packages[] | select($p == "" or .name == $p)][0]' <<< "$meta")"
+          if [ "$pkg" = "null" ]; then
+            echo "::error::package '$PACKAGE' not found"
+            exit 1
+          fi
+          lib="$(jq -r '[.targets[] | select(.crate_types | index("cdylib")) | .name][0] // empty' <<< "$pkg")"
+          if [ -z "$lib" ]; then
+            echo "::error::the package has no cdylib target; add crate-type = [\"cdylib\"] to [lib]"
+            exit 1
+          fi
+          echo "crate-name=$(jq -r .name <<< "$pkg")" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -r .version <<< "$pkg")" >> "$GITHUB_OUTPUT"
+          echo "wasm-file=${lib}.wasm" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests and clippy
+        if: ${{ inputs.run-tests }}
+        run: |
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-features -- -D warnings
+
+      - name: Build
+        env:
+          WASM_FILE: ${{ steps.meta.outputs.wasm-file }}
+        run: |
+          args=(--locked --release --target "$TARGET")
+          if [ -n "$PACKAGE" ]; then args+=(--package "$PACKAGE"); fi
+          if [ -n "$FEATURES" ]; then args+=(--features "$FEATURES"); fi
+          cargo build "${args[@]}"
+          mkdir -p dist
+          cp "target/$TARGET/release/$WASM_FILE" "dist/$WASM_FILE"
+          ls -l dist
+
+      - name: Check the module
+        env:
+          WASM_FILE: ${{ steps.meta.outputs.wasm-file }}
+        run: |
+          # every Wasm module starts with the magic bytes \0asm
+          [ "$(head -c 4 "dist/$WASM_FILE" | od -An -c | tr -d ' ')" = '\0asm' ] \
+            || { echo "::error::$WASM_FILE is not a Wasm module"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: dist/${{ steps.meta.outputs.wasm-file }}
+          retention-days: ${{ inputs.artifact-retention-days }}
+          if-no-files-found: error

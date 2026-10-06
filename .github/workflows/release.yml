@@ -14,6 +14,22 @@ on:
         description: 'Name of the built binary / crate (e.g. convfmt)'
         type: string
         required: true
+      enable-binaries:
+        description: 'Build the binary archives and create the GitHub Release from them; set false for a crate without a binary, e.g. a dprint plugin'
+        type: boolean
+        default: true
+      enable-dprint-plugin:
+        description: 'Build a dprint Wasm plugin and attach plugin.wasm and schema.json to the GitHub Release'
+        type: boolean
+        default: false
+      dprint-plugin-features:
+        description: 'Cargo features that build the crate as a Wasm plugin (used if enable-dprint-plugin)'
+        type: string
+        default: 'wasm'
+      dprint-schema-path:
+        description: 'Config schema whose $id ends with /0.0.0/schema.json; the version is replaced by the tag (used if enable-dprint-plugin)'
+        type: string
+        default: 'deployment/schema.json'
       enable-crates:
         description: 'Publish the crate to crates.io'
         type: boolean
@@ -70,6 +86,7 @@ on:
 
 jobs:
   release-github:
+    if: ${{ inputs.enable-binaries }}
     strategy:
       fail-fast: false
       matrix:
@@ -146,8 +163,111 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # The Wasm module is built by the generic wasm.yml, which does not know about dprint or releases.
+  # It runs in parallel with release-github; the tests and clippy run here only when release-github
+  # (which runs them as well) is skipped.
+  wasm:
+    name: wasm
+    if: ${{ inputs.enable-dprint-plugin }}
+    uses: oriontvv/rust-workflows/.github/workflows/wasm.yml@master
+    with:
+      features: ${{ inputs.dprint-plugin-features }}
+      run-tests: ${{ !inputs.enable-binaries }}
+      artifact-name: dprint-plugin-wasm
+
+  # plugins.dprint.dev has no upload step: it serves the `plugin.wasm` and `schema.json` assets of the latest
+  # GitHub Release. Runs after release-github so the release already exists and there is no race; without
+  # binaries release-github is skipped and this job creates the release itself.
+  # The tag has to equal the crate version and must not have a `v` prefix: the plugin reports its
+  # `config_schema_url` as plugins.dprint.dev/<owner>/<repo>/<version>/schema.json, which resolves by tag name.
+  release-dprint-plugin:
+    name: release-dprint-plugin
+    needs: [release-github, wasm]
+    if: ${{ !cancelled() && inputs.enable-dprint-plugin && !contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      SCHEMA_PATH: ${{ inputs.dprint-schema-path }}
+      VERSION: ${{ needs.wasm.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check the tag matches the crate version
+        run: |
+          if [ "$GITHUB_REF_NAME" != "$VERSION" ]; then
+            echo "::error::tag '$GITHUB_REF_NAME' does not match the version '$VERSION' in Cargo.toml"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.wasm.outputs.artifact-name }}
+          path: wasm
+
+      - name: Create plugin.wasm and schema.json
+        env:
+          WASM_FILE: ${{ needs.wasm.outputs.wasm-file }}
+        run: |
+          mkdir -p release
+          cp "wasm/$WASM_FILE" release/plugin.wasm
+          sed "s|/0\.0\.0/schema\.json|/${VERSION}/schema.json|" "$SCHEMA_PATH" > release/schema.json
+          jq empty release/schema.json
+          grep -q "/${VERSION}/schema.json" release/schema.json \
+            || { echo "::error::\$id in $SCHEMA_PATH must end with /0.0.0/schema.json"; exit 1; }
+
+      - name: Check the plugin
+        run: |
+          # the dprint CLI refuses plugins that do not export their schema version
+          grep -aq "dprint_plugin_version_4" release/plugin.wasm \
+            || { echo "::error::plugin.wasm does not export dprint_plugin_version_4"; exit 1; }
+      - name: Check if the release exists
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract release notes
+        if: ${{ steps.release.outputs.exists == 'false' }}
+        uses: ffurrer2/extract-release-notes@v3
+        with:
+          release_notes_file: release-notes.md
+
+      - name: Upload to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXISTS: ${{ steps.release.outputs.exists }}
+        run: |
+          if [ "$EXISTS" = "true" ]; then
+            gh release upload "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            flags=""
+            case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+            gh release create "$GITHUB_REF_NAME" release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file release-notes.md \
+              $flags
+          fi
+
+      - name: Print the plugin url
+        run: |
+          {
+            echo "### Published ${GITHUB_REF_NAME}"
+            echo
+            echo '```json'
+            echo "\"plugins\": [\"https://plugins.dprint.dev/${GITHUB_REPOSITORY}-${GITHUB_REF_NAME}.wasm\"]"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   release-checksums:
-    needs: release-github
+    needs: [release-github, release-dprint-plugin]
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (inputs.enable-binaries || inputs.enable-dprint-plugin) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -181,8 +301,8 @@ jobs:
             --clobber
 
   release-crates:
-    needs: release-github
-    if: ${{ inputs.enable-crates }}
+    needs: [release-github, release-dprint-plugin]
+    if: ${{ !cancelled() && inputs.enable-crates && !contains(needs.*.result, 'failure') && (inputs.enable-binaries || inputs.enable-dprint-plugin) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
