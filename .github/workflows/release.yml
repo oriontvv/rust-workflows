@@ -301,8 +301,8 @@ jobs:
             --clobber
 
   release-crates:
-    needs: [release-github, release-dprint-plugin]
-    if: ${{ !cancelled() && inputs.enable-crates && !contains(needs.*.result, 'failure') && (inputs.enable-binaries || inputs.enable-dprint-plugin) }}
+    needs: release-github
+    if: ${{ inputs.enable-crates }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
