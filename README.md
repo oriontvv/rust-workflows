@@ -4,13 +4,13 @@ Common, reusable GitHub Actions workflows for Rust projects: CI (check/test/fmt/
 coverage publishing, GitHub Pages (wasm) deploy and a full release pipeline (GitHub Release +
 crates.io + Docker + Homebrew tap). Extracted from [convfmt](https://github.com/oriontvv/convfmt).
 
-Each file in [`workflows/`](workflows/) is a [reusable workflow](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
+Each file in [`.github/workflows/`](.github/workflows) is a [reusable workflow](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
 (`on: workflow_call`). A consuming repo doesn't copy the YAML — it calls it with `uses:` and a few
 inputs/secrets.
 
 ## How to inherit
 
-In your project's repo, create thin wrapper workflows under `workflows/` that call the ones
+In your project's repo, create thin wrapper workflows under `.github/workflows` that call the ones
 here. Pin to a tag/SHA for stability, or `@master` to always get the latest version.
 
 ### Scaffolding with cookiecutter
@@ -29,7 +29,7 @@ scaffold often and don't want to re-resolve the environment each run.
 
 See [its README](./cookiecutter-rust-workflows/README.md) for the full option list.
 
-### `workflows/ci.yml`
+### `.github/workflows/ci.yml`
 
 ```yaml
 name: CI
@@ -37,14 +37,14 @@ on: [push, pull_request]
 
 jobs:
   ci:
-    uses: oriontvv/rust-workflows/workflows/ci.yml@master
+    uses: oriontvv/rust-workflows/.github/workflows/ci.yml@master
     with:
       enable-wasm: false   # set true if the project has a web/wasm target
       enable-nix: false    # set true if the project ships a flake.nix package
       enable-audit: true
 ```
 
-### `workflows/coverage.yml`
+### `.github/workflows/coverage.yml`
 
 ```yaml
 name: Coverage
@@ -54,7 +54,7 @@ on:
 
 jobs:
   coverage:
-    uses: oriontvv/rust-workflows/workflows/coverage.yml@master
+    uses: oriontvv/rust-workflows/.github/workflows/coverage.yml@master
     permissions:
       contents: write     # required: the job force-pushes the coverage branch
     with:
@@ -63,7 +63,7 @@ jobs:
       # coverage-command: make coverage
 ```
 
-### `workflows/pages.yml` (optional, wasm projects only)
+### `.github/workflows/pages.yml` (optional, wasm projects only)
 
 ```yaml
 name: Pages
@@ -74,7 +74,7 @@ on:
 
 jobs:
   pages:
-    uses: oriontvv/rust-workflows/workflows/pages.yml@master
+    uses: oriontvv/rust-workflows/.github/workflows/pages.yml@master
     permissions:
       contents: read
       pages: write
@@ -83,7 +83,7 @@ jobs:
 
 Requires enabling **Settings → Pages → Source: GitHub Actions** once in the consuming repo.
 
-### `workflows/release.yml`
+### `.github/workflows/release.yml`
 
 ```yaml
 name: Release
@@ -93,7 +93,7 @@ on:
 
 jobs:
   release:
-    uses: oriontvv/rust-workflows/workflows/release.yml@master
+    uses: oriontvv/rust-workflows/.github/workflows/release.yml@master
     with:
       binary-name: convfmt
       enable-crates: true

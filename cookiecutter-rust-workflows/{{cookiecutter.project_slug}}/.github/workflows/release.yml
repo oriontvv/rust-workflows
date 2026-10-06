@@ -10,7 +10,7 @@ on:
 
 jobs:
   release:
-    uses: {{ cookiecutter.rust_workflows_repo }}/workflows/release.yml@{{ cookiecutter.rust_workflows_ref }}
+    uses: {{ cookiecutter.rust_workflows_repo }}/.github/workflows/release.yml@{{ cookiecutter.rust_workflows_ref }}
     with:
       binary-name: {{ cookiecutter.binary_name }}
       enable-crates: {{ 'true' if cookiecutter.enable_crates == 'yes' else 'false' }}

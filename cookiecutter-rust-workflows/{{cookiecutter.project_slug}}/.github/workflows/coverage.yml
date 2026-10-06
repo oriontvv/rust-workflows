@@ -9,7 +9,7 @@ on:
 
 jobs:
   coverage:
-    uses: {{ cookiecutter.rust_workflows_repo }}/workflows/coverage.yml@{{ cookiecutter.rust_workflows_ref }}
+    uses: {{ cookiecutter.rust_workflows_repo }}/.github/workflows/coverage.yml@{{ cookiecutter.rust_workflows_ref }}
     permissions:
       contents: write
     with:

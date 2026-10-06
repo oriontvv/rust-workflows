@@ -1,7 +1,7 @@
 name: Reusable CI
 
 # Basic cargo check/test/fmt/clippy pipeline for any Rust project.
-# Call it from your repo's own workflow with `uses: oriontvv/rust-workflows/workflows/ci.yml@main`.
+# Call it from your repo's own workflow with `uses: oriontvv/rust-workflows/.github/workflows/ci.yml@main`.
 on:
   workflow_call:
     inputs:

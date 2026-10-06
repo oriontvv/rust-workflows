@@ -7,7 +7,7 @@ on: [push, pull_request]
 
 jobs:
   ci:
-    uses: {{ cookiecutter.rust_workflows_repo }}/workflows/ci.yml@{{ cookiecutter.rust_workflows_ref }}
+    uses: {{ cookiecutter.rust_workflows_repo }}/.github/workflows/ci.yml@{{ cookiecutter.rust_workflows_ref }}
     with:
       enable-wasm: {{ 'true' if cookiecutter.enable_wasm == 'yes' else 'false' }}
       enable-nix: {{ 'true' if cookiecutter.enable_nix == 'yes' else 'false' }}
